@@ -22,9 +22,8 @@ namespace dnnl::impl::gpu::generic::sycl {
 
 status_t ref_inner_product_fwd_t::pd_t::init_matmul(impl::engine_t *engine) {
     matmul_desc_t matmul_desc;
-    CHECK(matmul_desc_init(&matmul_desc, arg_md(DNNL_ARG_SRC),
-            arg_md(DNNL_ARG_WEIGHTS), arg_md(DNNL_ARG_BIAS),
-            arg_md(DNNL_ARG_DST)));
+    CHECK(matmul_desc_init(&matmul_desc, &src_md_reshaped, &weights_md_reshaped,
+            arg_md(DNNL_ARG_BIAS), arg_md(DNNL_ARG_DST)));
     primitive_attr_t matmul_attr(*attr());
 
     primitive_desc_iterator_t it(engine,

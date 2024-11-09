@@ -40,12 +40,14 @@ struct ref_inner_product_fwd_t : public gpu::generic::sycl::primitive_t {
             auto weights_dt = weights_md(0)->data_type;
             auto dst_dt = dst_md()->data_type;
             auto bias_dt = weights_md(1)->data_type;
+            if (src_md()->ndims == 2) {}
             const bool ok = (set_default_params() == status::success)
                     && is_fwd()
                     && check_if_dtypes_valid(
                             src_dt, dst_dt, bias_dt, weights_dt)
                     && sycl_post_ops_t::post_ops_ok(attr());
             if (not ok) { return status::unimplemented; }
+            CHECK(create_ip_mds());
             return init_matmul(engine);
         }
 
@@ -75,7 +77,48 @@ struct ref_inner_product_fwd_t : public gpu::generic::sycl::primitive_t {
                             && utils::one_of(bias_dtype, f32, f16));
         }
 
+        status_t create_ip_mds() {
+
+            auto accumulate_dimensions = [](const dims_t dimensions, int start,
+                                                 int end) -> int64_t {
+                int64_t accum = 1;
+                for (int i = start; i < end; i++) {
+                    accum *= dimensions[i];
+                }
+                return accum;
+            };
+
+            const auto src_md_ = src_md();
+            const auto weights_md_ = weights_md();
+
+            // Reshape input into the form of Batch x (\prod_{dim_{n-1}}^dim_0)
+            if (src_md_->ndims == 2) {
+                src_md_reshaped = *src_md_;
+            } else {
+                // Input is always Batch x Dim1 x .... x DimN
+                int64_t src_flattened_dimension = accumulate_dimensions(
+                        src_md_->dims, 1, src_md_->ndims);
+                dims_t src_reshaped_dims {
+                        src_md_->dims[0], src_flattened_dimension};
+                CHECK(memory_desc_init_by_tag(src_md_reshaped, 2,
+                        src_reshaped_dims, src_md_->data_type, format_tag::ab));
+            }
+
+            // Reshape weights as (OC x (\prod_{dim_{n-1}}^dim_0))^T
+            int weights_flattened_dimensions = accumulate_dimensions(
+                    weights_md_->dims, 1, weights_md_->ndims);
+            dims_t weights_reshaped_dims {
+                    weights_flattened_dimensions, weights_md_->dims[0]};
+            CHECK(memory_desc_init_by_tag(weights_md_reshaped, 2,
+                    weights_reshaped_dims, weights_md_->data_type,
+                    format_tag::ba));
+            return status::success;
+        }
+
         status_t init_matmul(impl::engine_t *engine);
+        // Memory descriptors to contain reshaped tensors from nD to 2D for IP
+        memory_desc_t src_md_reshaped;
+        memory_desc_t weights_md_reshaped;
     };
 
     status_t init(impl::engine_t *engine) override;
