@@ -23,7 +23,7 @@ namespace dnnl::impl::gpu::generic::sycl {
 status_t ref_inner_product_fwd_t::pd_t::init_matmul(impl::engine_t *engine) {
     matmul_desc_t matmul_desc;
     CHECK(matmul_desc_init(&matmul_desc, &src_md_reshaped, &weights_md_reshaped,
-            arg_md(DNNL_ARG_BIAS), arg_md(DNNL_ARG_DST)));
+            &bias_md_reshaped, arg_md(DNNL_ARG_DST)));
     primitive_attr_t matmul_attr(*attr());
 
     primitive_desc_iterator_t it(engine,
@@ -34,9 +34,7 @@ status_t ref_inner_product_fwd_t::pd_t::init_matmul(impl::engine_t *engine) {
         if (matmul_pd) { break; }
     }
     if (!matmul_pd) { return status::invalid_arguments; }
-
-    return reinterpret_cast<ref_matmul_t::pd_t *>(matmul_pd.get())
-            ->init(engine);
+    return status::success;
 }
 
 status_t ref_inner_product_fwd_t::init(impl::engine_t *engine) {
@@ -47,7 +45,11 @@ status_t ref_inner_product_fwd_t::init(impl::engine_t *engine) {
 }
 
 status_t ref_inner_product_fwd_t::execute(const exec_ctx_t &ctx) const {
-    return matmul_primitive->execute(ctx);
+    nested_scratchpad_t nested_scratchpad(
+            ctx, memory_tracking::names::key_nested, matmul_primitive);
+    exec_ctx_t copied_ctx(ctx);
+    copied_ctx.set_scratchpad_grantor(nested_scratchpad.grantor());
+    return matmul_primitive->execute(copied_ctx);
 }
 
 } // namespace dnnl::impl::gpu::generic::sycl

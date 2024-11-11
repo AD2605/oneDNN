@@ -40,7 +40,6 @@ struct ref_inner_product_fwd_t : public gpu::generic::sycl::primitive_t {
             auto weights_dt = weights_md(0)->data_type;
             auto dst_dt = dst_md()->data_type;
             auto bias_dt = weights_md(1)->data_type;
-            if (src_md()->ndims == 2) {}
             const bool ok = (set_default_params() == status::success)
                     && is_fwd()
                     && check_if_dtypes_valid(
@@ -48,7 +47,13 @@ struct ref_inner_product_fwd_t : public gpu::generic::sycl::primitive_t {
                     && sycl_post_ops_t::post_ops_ok(attr());
             if (not ok) { return status::unimplemented; }
             CHECK(create_ip_mds());
-            return init_matmul(engine);
+            CHECK(init_matmul(engine));
+
+            // book scratchpad for the matmul
+            auto scratchpad = scratchpad_registry().registrar();
+            scratchpad.book(memory_tracking::names::key_nested,
+                    matmul_pd->scratchpad_registry());
+            return status::success;
         }
 
         std::shared_ptr<primitive_desc_t> matmul_pd;
@@ -88,8 +93,9 @@ struct ref_inner_product_fwd_t : public gpu::generic::sycl::primitive_t {
                 return accum;
             };
 
-            const auto src_md_ = src_md();
-            const auto weights_md_ = weights_md();
+            const auto src_md_ = arg_md(DNNL_ARG_SRC);
+            const auto weights_md_ = arg_md(DNNL_ARG_WEIGHTS);
+            const auto bias_md_ = arg_md(DNNL_ARG_BIAS);
 
             // Reshape input into the form of Batch x (\prod_{dim_{n-1}}^dim_0)
             if (src_md_->ndims == 2) {
@@ -112,6 +118,9 @@ struct ref_inner_product_fwd_t : public gpu::generic::sycl::primitive_t {
             CHECK(memory_desc_init_by_tag(weights_md_reshaped, 2,
                     weights_reshaped_dims, weights_md_->data_type,
                     format_tag::ba));
+            dims_t bias_reshaped_dims {1, bias_md_->dims[0]};
+            CHECK(memory_desc_init_by_tag(bias_md_reshaped, 2,
+                    bias_reshaped_dims, bias_md_->data_type, format_tag::ab));
             return status::success;
         }
 
@@ -119,6 +128,7 @@ struct ref_inner_product_fwd_t : public gpu::generic::sycl::primitive_t {
         // Memory descriptors to contain reshaped tensors from nD to 2D for IP
         memory_desc_t src_md_reshaped;
         memory_desc_t weights_md_reshaped;
+        memory_desc_t bias_md_reshaped;
     };
 
     status_t init(impl::engine_t *engine) override;
