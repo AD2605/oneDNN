@@ -717,7 +717,7 @@ struct cudnn_matmul_lt_impl_t {
             }
             if (!params->w_blocked_) {
                 transform_matrix(lt_handle, params, a_layout, a,
-                        blocked_a_layout, block_a_scratch, !params->trans_a_,
+                        blocked_a_layout, block_a_scratch, params->trans_a_,
                         streamId);
                 a = block_a_scratch;
             }
@@ -807,10 +807,6 @@ struct cudnn_matmul_lt_impl_t {
                     c_layout, &gemm_algo, algo_scratch,
                     heuristic_results.workspaceSize, streamId);
         }
-    }
-
-    ~cudnn_matmul_lt_impl_t() {
-        if (matmul_params_) { matmul_params_->cleanup(); }
     }
 
 private:

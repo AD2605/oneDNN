@@ -79,7 +79,7 @@ struct ref_inner_product_fwd_t : public gpu::generic::sycl::primitive_t {
                     || (utils::one_of(src_dt, bf16)
                             && utils::one_of(weight_dtype, bf16)
                             && utils::one_of(dst_dt, f32, bf16)
-                            && utils::one_of(bias_dtype, f32, f16));
+                            && utils::one_of(bias_dtype, f32, bf16));
         }
 
         status_t create_ip_mds() {
