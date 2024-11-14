@@ -32,19 +32,28 @@ struct ref_inner_product_fwd_t : public gpu::generic::sycl::primitive_t {
 
     struct pd_t : public gpu_inner_product_fwd_pd_t {
         using gpu_inner_product_fwd_pd_t::gpu_inner_product_fwd_pd_t;
+        using sm = primitive_attr_t::skip_mask_t;
 
         DECLARE_COMMON_PD_T("dpcpp:ref:any", ref_inner_product_fwd_t);
 
         status_t init(impl::engine_t *engine) {
-            auto src_dt = src_md()->data_type;
-            auto weights_dt = weights_md(0)->data_type;
-            auto dst_dt = dst_md()->data_type;
-            auto bias_dt = weights_md(1)->data_type;
+            auto src_dt = arg_md(DNNL_ARG_SRC)->data_type;
+            auto weights_dt = arg_md(DNNL_ARG_WEIGHTS)->data_type;
+            auto dst_dt = arg_md(DNNL_ARG_DST)->data_type;
+            auto bias_dt = with_bias() ? arg_md(DNNL_ARG_BIAS)->data_type
+                                       : data_type::undef;
+
             const bool ok = (set_default_params() == status::success)
                     && is_fwd()
                     && check_if_dtypes_valid(
                             src_dt, dst_dt, bias_dt, weights_dt)
-                    && sycl_post_ops_t::post_ops_ok(attr());
+                    && sycl_post_ops_t::post_ops_ok(attr())
+                    && (attr_.set_default_formats(dst_md()) == status::success)
+                    && attr()->has_default_values(sm::scales_runtime
+                            | sm::zero_points_runtime | sm::post_ops
+                            | sm::dropout | sm::scales_runtime_data_type
+                            | sm::zero_points_runtime_data_type);
+
             if (not ok) { return status::unimplemented; }
             CHECK(create_ip_mds());
             CHECK(init_matmul(engine));
@@ -60,26 +69,25 @@ struct ref_inner_product_fwd_t : public gpu::generic::sycl::primitive_t {
 
     private:
         bool check_if_dtypes_valid(const data_type_t &src_dt,
-                const data_type_t &dst_dt, const data_type_t &bias_dtype,
-                const data_type_t &weight_dtype) const {
+                const data_type_t &dst_dt, const data_type_t &bias_dt,
+                const data_type_t &weight_dt) const {
             using namespace data_type;
-            return (utils::one_of(src_dt, f32)
-                           && utils::one_of(weight_dtype, f32)
+            return (utils::one_of(src_dt, f32) && utils::one_of(weight_dt, f32)
                            && utils::one_of(dst_dt, f32)
-                           && utils::one_of(bias_dtype, f32))
+                           && utils::one_of(bias_dt, f32, undef))
                     || (utils::one_of(src_dt, f16)
-                            && utils::one_of(weight_dtype, f16)
+                            && utils::one_of(weight_dt, f16)
                             && utils::one_of(dst_dt, f16, f32, s8, u8)
-                            && utils::one_of(bias_dtype, f16, f32))
+                            && utils::one_of(bias_dt, f16, f32, undef))
                     || (utils::one_of(src_dt, u8, s8)
-                            && utils::one_of(weight_dtype, s8)
+                            && utils::one_of(weight_dt, s8)
                             && utils::one_of(dst_dt, u8, s8, s32, bf16, f32)
                             && utils::one_of(
-                                    bias_dtype, u8, s8, s32, bf16, f32))
+                                    bias_dt, u8, s8, s32, bf16, f32, undef))
                     || (utils::one_of(src_dt, bf16)
-                            && utils::one_of(weight_dtype, bf16)
+                            && utils::one_of(weight_dt, bf16)
                             && utils::one_of(dst_dt, f32, bf16)
-                            && utils::one_of(bias_dtype, f32, bf16));
+                            && utils::one_of(bias_dt, f32, bf16, undef));
         }
 
         status_t create_ip_mds() {
@@ -101,7 +109,6 @@ struct ref_inner_product_fwd_t : public gpu::generic::sycl::primitive_t {
             if (src_md_->ndims == 2) {
                 src_md_reshaped = *src_md_;
             } else {
-                // Input is always Batch x Dim1 x .... x DimN
                 int64_t src_flattened_dimension = accumulate_dimensions(
                         src_md_->dims, 1, src_md_->ndims);
                 dims_t src_reshaped_dims {
