@@ -52,7 +52,10 @@ struct ref_inner_product_fwd_t : public gpu::generic::sycl::primitive_t {
                     && attr()->has_default_values(sm::scales_runtime
                             | sm::zero_points_runtime | sm::post_ops
                             | sm::dropout | sm::scales_runtime_data_type
-                            | sm::zero_points_runtime_data_type);
+                            | sm::zero_points_runtime_data_type)
+                    && memory_desc_wrapper(src_md()).is_plain()
+                    && memory_desc_wrapper(dst_md())
+                               .is_plain(); // Blocked memory formats are not supported
 
             if (not ok) { return status::unimplemented; }
             CHECK(create_ip_mds());
