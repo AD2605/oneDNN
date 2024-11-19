@@ -18,6 +18,7 @@
 #ifndef GPU_GENERIC_SYCL_REF_INNER_PRODUCT_HPP
 #define GPU_GENERIC_SYCL_REF_INNER_PRODUCT_HPP
 
+#include "common/primitive_desc_iterator.hpp"
 #include "gpu/generic/sycl/ref_matmul.hpp"
 #include "gpu/generic/sycl/sycl_gpu_primitive.hpp"
 #include "gpu/generic/sycl/sycl_post_ops.hpp"
@@ -27,6 +28,16 @@
 #include "gpu/gpu_primitive.hpp"
 
 namespace dnnl::impl::gpu::generic::sycl {
+
+namespace detail {
+status_t init_matmul_pd(impl::engine_t *engine,
+        const primitive_attr_t *attributes, const memory_desc_t *src_desc,
+        const memory_desc_t *weights_desc, const memory_desc_t *bias_desc,
+        const memory_desc_t *dst_desc,
+        std::shared_ptr<primitive_desc_t> &matmul_pd);
+
+} // namespace detail
+
 struct ref_inner_product_fwd_t : public gpu::generic::sycl::primitive_t {
     using gpu::generic::sycl::primitive_t::primitive_t;
 
@@ -59,7 +70,9 @@ struct ref_inner_product_fwd_t : public gpu::generic::sycl::primitive_t {
 
             if (not ok) { return status::unimplemented; }
             CHECK(create_ip_mds());
-            CHECK(init_matmul(engine));
+            CHECK(gpu::generic::sycl::detail::init_matmul_pd(engine, attr(),
+                    &src_md_reshaped, &weights_md_reshaped, &bias_md_reshaped,
+                    arg_md(DNNL_ARG_DST), matmul_pd));
 
             // book scratchpad for the matmul
             auto scratchpad = scratchpad_registry().registrar();
@@ -134,7 +147,6 @@ struct ref_inner_product_fwd_t : public gpu::generic::sycl::primitive_t {
             return status::success;
         }
 
-        status_t init_matmul(impl::engine_t *engine);
         // Memory descriptors to contain reshaped tensors from nD to 2D for IP
         memory_desc_t src_md_reshaped;
         memory_desc_t weights_md_reshaped;
@@ -146,9 +158,69 @@ struct ref_inner_product_fwd_t : public gpu::generic::sycl::primitive_t {
 
 private:
     const pd_t *pd() const { return (const pd_t *)primitive_t::pd().get(); }
-    kernel_t kernel_;
     std::shared_ptr<impl::primitive_t> matmul_primitive;
 };
+
+struct ref_inner_product_bwd_data_t : public gpu::generic::sycl::primitive_t {
+
+    using gpu::generic::sycl::primitive_t::primitive_t;
+
+    struct pd_t : public gpu_inner_product_bwd_data_pd_t {
+        using gpu_inner_product_bwd_data_pd_t::gpu_inner_product_bwd_data_pd_t;
+        DECLARE_COMMON_PD_T("dpcpp:ref:any", ref_inner_product_bwd_data_t);
+
+        status_t init(impl::engine_t *engine) {
+            auto src_dt = arg_md(DNNL_ARG_SRC)->data_type;
+            auto weights_dt = arg_md(DNNL_ARG_WEIGHTS)->data_type;
+            auto dst_dt = arg_md(DNNL_ARG_DST)->data_type;
+
+            bool ok = !is_fwd()
+                    && check_bwd_data_dtypes(src_dt, dst_dt, weights_dt)
+                    && attr()->has_default_values() // no post-op is supported
+                    && memory_desc_wrapper(src_md()).is_plain()
+                    && memory_desc_wrapper(dst_md())
+                               .is_plain(); // Blocked memory formats are not supported
+            if (not ok) { return status::unimplemented; }
+
+            // dL/dX = (dL/dY) x W (hence no reshape required here)
+            auto empty_bias_desc = types::
+                    zero_md(); // empty memory descriptor to signify bias is not applied
+
+            CHECK(gpu::generic::sycl::detail::init_matmul_pd(engine, attr(),
+                    arg_md(DNNL_ARG_DIFF_DST), arg_md(DNNL_ARG_WEIGHTS),
+                    arg_md(DNNL_ARG_DIFF_SRC), &empty_bias_desc, matmul_pd));
+
+            auto scratchpad = scratchpad_registry().registrar();
+            scratchpad.book(memory_tracking::names::key_nested,
+                    matmul_pd->scratchpad_registry());
+            return status::success;
+        }
+
+        std::shared_ptr<primitive_desc_t> matmul_pd;
+
+    private:
+        bool check_bwd_data_dtypes(const data_type_t &src_dt,
+                const data_type_t &dst_dt, const data_type_t &weight_dt) {
+            using namespace data_type;
+            return (utils::one_of(src_dt, f32)
+                           && utils::one_of(dst_dt, f32, f16, bf16)
+                           && utils::one_of(weight_dt, f32, bf16, f16))
+                    || (utils::one_of(src_dt, bf16)
+                            && utils::one_of(dst_dt, bf16)
+                            && utils::one_of(weight_dt, bf16))
+                    || (utils::one_of(src_dt, f16) && utils::one_of(dst_dt, f16)
+                            && utils::one_of(weight_dt, f16));
+        }
+    };
+
+    status_t init(impl::engine_t *engine) override;
+    status_t execute(const exec_ctx_t &ctx) const override;
+
+private:
+    const pd_t *pd() const { return (const pd_t *)primitive_t::pd().get(); }
+    std::shared_ptr<impl::primitive_t> matmul_primitive;
+};
+
 } // namespace dnnl::impl::gpu::generic::sycl
 
 #endif
