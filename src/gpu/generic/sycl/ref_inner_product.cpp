@@ -42,6 +42,29 @@ status_t init_matmul_pd(impl::engine_t *engine,
     }
     return status::success;
 }
+
+status_t flatten_md(const memory_desc_t &desc, memory_desc_t &flattened_md,
+        format_tag_t format_tag) {
+    // Always flattens from a nD to a 2D memory layout, with batch as the first dimension
+    assert(format_tag == format_tag::ab || format_tag == format_tag::ba);
+    const auto &dimensions = desc.dims;
+    int64_t flattened_dimension = 1;
+    for (int i = 1; i < desc.ndims; i++) {
+        flattened_dimension *= dimensions[i];
+    }
+    dims_t reshaped_dims;
+    if (format_tag == format_tag::ab) {
+        reshaped_dims[0] = desc.dims[0];
+        reshaped_dims[1] = flattened_dimension;
+    } else {
+        reshaped_dims[0] = flattened_dimension;
+        reshaped_dims[1] = desc.dims[0];
+    }
+    CHECK(memory_desc_init_by_tag(
+            flattened_md, 2, reshaped_dims, desc.data_type, format_tag));
+    return status::success;
+}
+
 } // namespace detail
 
 status_t ref_inner_product_fwd_t::init(impl::engine_t *engine) {
@@ -69,8 +92,15 @@ status_t ref_inner_product_bwd_data_t::init(impl::engine_t *engine) {
 status_t ref_inner_product_bwd_data_t::execute(const exec_ctx_t &ctx) const {
     nested_scratchpad_t nested_scratchpad(
             ctx, memory_tracking::names::key_nested, matmul_primitive);
-    exec_ctx_t copied_ctx(ctx);
+
+    exec_args_t args_copy(ctx.args());
+    // Map src and dst to diff_dst and diff_src respectively
+    args_copy[DNNL_ARG_SRC] = args_copy[DNNL_ARG_DIFF_DST];
+    args_copy[DNNL_ARG_DST] = args_copy[DNNL_ARG_DIFF_SRC];
+    exec_ctx_t copied_ctx(ctx.stream(), std::move(args_copy));
+
     copied_ctx.set_scratchpad_grantor(nested_scratchpad.grantor());
+
     return matmul_primitive->execute(copied_ctx);
 }
 
