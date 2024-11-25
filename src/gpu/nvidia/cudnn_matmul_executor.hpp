@@ -394,14 +394,14 @@ struct cudnn_matmul_lt_exec_t final : public cudnn_matmul_lt_base_exec_t {
                             ::sycl::access::mode::read_write>();
             auto arg_block_a_scratch = params->weight_size_ != 0
                     ? CTX_SCRATCH_SYCL_MEMORY(
-                              memory_tracking::names::key_gemm_blocked_a)
+                            memory_tracking::names::key_gemm_blocked_a)
                     : xpu::sycl::interop_memory_arg_t<
-                              ::sycl::access::mode::read_write>();
+                            ::sycl::access::mode::read_write>();
             auto arg_block_b_scratch = params->source_size_ != 0
                     ? CTX_SCRATCH_SYCL_MEMORY(
-                              memory_tracking::names::key_gemm_blocked_b)
+                            memory_tracking::names::key_gemm_blocked_b)
                     : xpu::sycl::interop_memory_arg_t<
-                              ::sycl::access::mode::read_write>();
+                            ::sycl::access::mode::read_write>();
             auto arg_block_c_scratch = params->dest_size_ != 0
                     ? CTX_SCRATCH_SYCL_MEMORY(
                             memory_tracking::names::key_matmul_lt_block_c)
