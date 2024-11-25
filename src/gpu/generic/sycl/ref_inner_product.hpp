@@ -219,11 +219,11 @@ struct ref_inner_product_bwd_weights_t
             bool ok = !is_fwd() && (set_default_params() == status::success)
                     && check_bwd_weights_dtypes(
                             src_dt, dst_dt, weights_dt, bias_dt)
+                    && attr()->has_default_values() // no post-op is supported
                     && memory_desc_wrapper(arg_md(DNNL_ARG_DIFF_DST)).is_plain()
                     && memory_desc_wrapper(arg_md(DNNL_ARG_SRC)).is_plain()
                     && memory_desc_wrapper(arg_md(DNNL_ARG_DIFF_WEIGHTS))
                                .is_plain();
-            //Usage of post ops does not influence dL/dW and dL/dB;
 
             if (not ok) { return status::unimplemented; };
 

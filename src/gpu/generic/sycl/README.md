@@ -93,6 +93,15 @@ The implementation supports both forward and backward directions.
 `pow`, `relu`, `round`, `soft_relu`, `sqrt`, `square`,`swish` and `tanh`
 * Supported formats: `NCDHW`, `NDHWC`, `NCHW`, `NHWC`, `NCW`, `NWC`, `NC`, `N`
 * Supported data types: `f32`, `bf16`, `f16`, `s32`, `s8`, `u8`
+  
+## Inner Product
+
+The implementation supports both forward and backward directions.
+
+* Supported formats: All plain formats are supported.
+* Supported data types: All possible data combinations as listed in the specification are supported.
+* Supported post-ops: All the post-ops as mentioned in the specification are supported.
+* The backward pass does not support post-ops. One should not use post-ops in the forward pass during training
 
 ## Layer Normalization
 
