@@ -112,7 +112,7 @@ status_t ref_inner_product_bwd_weights_t::init(impl::engine_t *engine) {
     if (pd()->with_bias()) {
         std::pair<std::shared_ptr<impl::primitive_t>, cache_state_t>
                 p_reduction;
-        CHECK(pd()->reduction_pd->create_primitive_nested(p, engine));
+        CHECK(pd()->reduction_pd->create_primitive_nested(p_reduction, engine));
         reduction_primitive = p_reduction.first;
     }
 
@@ -145,12 +145,12 @@ status_t ref_inner_product_bwd_weights_t::execute(const exec_ctx_t &ctx) const {
                 = args_copy_reduction[DNNL_ARG_DIFF_DST];
         args_copy_reduction[DNNL_ARG_DST]
                 = args_copy_reduction[DNNL_ARG_DIFF_BIAS];
-        exec_ctx_t copied_ctx_reduction(ctx.stream(), std::move(args_copy_reduction));
+        exec_ctx_t copied_ctx_reduction(
+                ctx.stream(), std::move(args_copy_reduction));
 
         copied_ctx_reduction.set_scratchpad_grantor(
                 reduction_scratchpad.grantor());
-        // calcules dL/dW;
-        CHECK(matmul_primitive->execute(copied_ctx));
+        CHECK(reduction_primitive->execute(copied_ctx_reduction));
     }
     return status::success;
 }

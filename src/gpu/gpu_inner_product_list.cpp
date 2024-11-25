@@ -68,6 +68,7 @@ const std::map<pk_impl_key_t, std::vector<impl_list_item_t>>
         GPU_INSTANCE_AMD(amd::miopen_gemm_inner_product_bwd_data_t)
         GPU_INSTANCE_AMD(amd::miopen_gemm_inner_product_bwd_weights_t)
         GPU_INSTANCE_GENERIC_SYCL(generic::sycl::ref_inner_product_bwd_data_t)
+        GPU_INSTANCE_GENERIC_SYCL(generic::sycl::ref_inner_product_bwd_weights_t)
         nullptr,
     })},
 });

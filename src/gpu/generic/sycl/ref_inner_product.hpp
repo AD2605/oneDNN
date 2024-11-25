@@ -202,13 +202,15 @@ private:
 
 struct ref_inner_product_bwd_weights_t
     : public gpu::generic::sycl::primitive_t {
+
     using gpu::generic::sycl::primitive_t::primitive_t;
 
     struct pd_t : public gpu_inner_product_bwd_weights_pd_t {
         using gpu_inner_product_bwd_weights_pd_t::
                 gpu_inner_product_bwd_weights_pd_t;
+        DECLARE_COMMON_PD_T("dpcpp:ref:any", ref_inner_product_bwd_weights_t);
 
-        status_t init(engine_t *engine) {
+        status_t init(impl::engine_t *engine) {
             auto src_dt = arg_md(DNNL_ARG_DIFF_DST)->data_type;
             auto weights_dt = arg_md(DNNL_ARG_SRC)->data_type;
             auto dst_dt = arg_md(DNNL_ARG_DIFF_WEIGHTS)->data_type;
@@ -277,14 +279,21 @@ struct ref_inner_product_bwd_weights_t
                             && utils::one_of(bias_dt, f32, f16, undef));
         }
 
-        status_t init_reduction_pd(engine_t *engine,
+        status_t init_reduction_pd(impl::engine_t *engine,
                 const memory_desc_t *src_desc, const memory_desc_t *dest_desc) {
             reduction_desc_t reduction_descriptor;
+            //diff_bias is 1D, diff_dst will be 2D, reshape diff_bias to 1xOC
+            dims_t diff_bias_reshaped_dims {1, dest_desc->dims[0]};
+            memory_desc_t diff_bias_reshaped;
+            CHECK(memory_desc_init_by_tag(diff_bias_reshaped, 2,
+                    diff_bias_reshaped_dims, dest_desc->data_type,
+                    format_tag::ab));
             CHECK(reduction_desc_init(&reduction_descriptor,
-                    alg_kind::reduction_sum, src_desc, dest_desc, 0.0f, 0.0f));
+                    alg_kind::reduction_sum, src_desc, &diff_bias_reshaped,
+                    0.0f, 0.0f));
             primitive_desc_iterator_t it(engine,
-                    reinterpret_cast<op_desc_t *>(&reduction_pd), attr(),
-                    nullptr);
+                    reinterpret_cast<op_desc_t *>(&reduction_descriptor),
+                    attr(), nullptr);
 
             if (!it.is_initialized()) return status::invalid_arguments;
             while (++it != it.end()) {
