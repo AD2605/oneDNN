@@ -71,7 +71,7 @@ status_t ref_inner_product_fwd_t::init(impl::engine_t *engine) {
     std::pair<std::shared_ptr<impl::primitive_t>, cache_state_t> p;
     CHECK(pd()->matmul_pd->create_primitive_nested(p, engine));
     matmul_primitive = p.first;
-    return matmul_primitive->init(engine);
+    return status::success;
 }
 
 status_t ref_inner_product_fwd_t::execute(const exec_ctx_t &ctx) const {
