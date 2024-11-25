@@ -18,6 +18,8 @@
 #ifndef GPU_GENERIC_SYCL_REF_INNER_PRODUCT_HPP
 #define GPU_GENERIC_SYCL_REF_INNER_PRODUCT_HPP
 
+#include "common/primitive_desc_iterator.hpp"
+#include "common/reduction_pd.hpp"
 #include "gpu/generic/sycl/ref_matmul.hpp"
 #include "gpu/generic/sycl/sycl_gpu_primitive.hpp"
 #include "gpu/generic/sycl/sycl_post_ops.hpp"
@@ -27,6 +29,19 @@
 #include "gpu/gpu_primitive.hpp"
 
 namespace dnnl::impl::gpu::generic::sycl {
+
+namespace detail {
+status_t init_matmul_pd(impl::engine_t *engine,
+        const primitive_attr_t *attributes, const memory_desc_t *src_desc,
+        const memory_desc_t *weights_desc, const memory_desc_t *bias_desc,
+        const memory_desc_t *dst_desc,
+        std::shared_ptr<primitive_desc_t> &matmul_pd);
+
+status_t flatten_md(const memory_desc_t &desc, memory_desc_t &flattened_md,
+        format_tag_t format_tag);
+
+} // namespace detail
+
 struct ref_inner_product_fwd_t : public gpu::generic::sycl::primitive_t {
     using gpu::generic::sycl::primitive_t::primitive_t;
 
@@ -58,8 +73,23 @@ struct ref_inner_product_fwd_t : public gpu::generic::sycl::primitive_t {
                                .is_plain(); // Blocked memory formats are not supported
 
             if (not ok) { return status::unimplemented; }
-            CHECK(create_ip_mds());
-            CHECK(init_matmul(engine));
+
+            memory_desc_t src_reshaped;
+            memory_desc_t weights_reshaped;
+            memory_desc_t bias_reshaped;
+            CHECK(detail::flatten_md(
+                    *arg_md(DNNL_ARG_SRC), src_reshaped, format_tag::ab));
+            CHECK(detail::flatten_md(*arg_md(DNNL_ARG_WEIGHTS),
+                    weights_reshaped, format_tag::ba));
+            const auto bias_md = arg_md(DNNL_ARG_BIAS);
+            //Reshape bias to 1 x OC;
+            dims_t reshaped_bias_dims {1, bias_md->dims[0]};
+            CHECK(memory_desc_init_by_tag(bias_reshaped, 2, reshaped_bias_dims,
+                    bias_md->data_type, format_tag::ab));
+
+            CHECK(gpu::generic::sycl::detail::init_matmul_pd(engine, attr(),
+                    &src_reshaped, &weights_reshaped, &bias_reshaped,
+                    arg_md(DNNL_ARG_DST), matmul_pd));
 
             // book scratchpad for the matmul
             auto scratchpad = scratchpad_registry().registrar();
@@ -92,53 +122,6 @@ struct ref_inner_product_fwd_t : public gpu::generic::sycl::primitive_t {
                             && utils::one_of(dst_dt, f32, bf16)
                             && utils::one_of(bias_dt, f32, bf16, undef));
         }
-
-        status_t create_ip_mds() {
-
-            auto accumulate_dimensions = [](const dims_t dimensions, int start,
-                                                 int end) -> int64_t {
-                int64_t accum = 1;
-                for (int i = start; i < end; i++) {
-                    accum *= dimensions[i];
-                }
-                return accum;
-            };
-
-            const auto src_md_ = arg_md(DNNL_ARG_SRC);
-            const auto weights_md_ = arg_md(DNNL_ARG_WEIGHTS);
-            const auto bias_md_ = arg_md(DNNL_ARG_BIAS);
-
-            // Reshape input into the form of Batch x (\prod_{dim_{n-1}}^dim_0)
-            if (src_md_->ndims == 2) {
-                src_md_reshaped = *src_md_;
-            } else {
-                int64_t src_flattened_dimension = accumulate_dimensions(
-                        src_md_->dims, 1, src_md_->ndims);
-                dims_t src_reshaped_dims {
-                        src_md_->dims[0], src_flattened_dimension};
-                CHECK(memory_desc_init_by_tag(src_md_reshaped, 2,
-                        src_reshaped_dims, src_md_->data_type, format_tag::ab));
-            }
-
-            // Reshape weights as (OC x (\prod_{dim_{n-1}}^dim_0))^T
-            int weights_flattened_dimensions = accumulate_dimensions(
-                    weights_md_->dims, 1, weights_md_->ndims);
-            dims_t weights_reshaped_dims {
-                    weights_flattened_dimensions, weights_md_->dims[0]};
-            CHECK(memory_desc_init_by_tag(weights_md_reshaped, 2,
-                    weights_reshaped_dims, weights_md_->data_type,
-                    format_tag::ba));
-            dims_t bias_reshaped_dims {1, bias_md_->dims[0]};
-            CHECK(memory_desc_init_by_tag(bias_md_reshaped, 2,
-                    bias_reshaped_dims, bias_md_->data_type, format_tag::ab));
-            return status::success;
-        }
-
-        status_t init_matmul(impl::engine_t *engine);
-        // Memory descriptors to contain reshaped tensors from nD to 2D for IP
-        memory_desc_t src_md_reshaped;
-        memory_desc_t weights_md_reshaped;
-        memory_desc_t bias_md_reshaped;
     };
 
     status_t init(impl::engine_t *engine) override;
@@ -146,9 +129,192 @@ struct ref_inner_product_fwd_t : public gpu::generic::sycl::primitive_t {
 
 private:
     const pd_t *pd() const { return (const pd_t *)primitive_t::pd().get(); }
-    kernel_t kernel_;
     std::shared_ptr<impl::primitive_t> matmul_primitive;
 };
+
+struct ref_inner_product_bwd_data_t : public gpu::generic::sycl::primitive_t {
+
+    using gpu::generic::sycl::primitive_t::primitive_t;
+
+    struct pd_t : public gpu_inner_product_bwd_data_pd_t {
+        using gpu_inner_product_bwd_data_pd_t::gpu_inner_product_bwd_data_pd_t;
+        DECLARE_COMMON_PD_T("dpcpp:ref:any", ref_inner_product_bwd_data_t);
+
+        status_t init(impl::engine_t *engine) {
+            auto src_dt = arg_md(DNNL_ARG_DIFF_DST)->data_type;
+            auto weights_dt = arg_md(DNNL_ARG_WEIGHTS)->data_type;
+            auto dst_dt = arg_md(DNNL_ARG_DIFF_SRC)->data_type;
+
+            bool ok = !is_fwd() && (set_default_params() == status::success)
+                    && check_bwd_data_dtypes(src_dt, dst_dt, weights_dt)
+                    && attr()->has_default_values() // no post-op is supported
+                    && memory_desc_wrapper(arg_md(DNNL_ARG_DIFF_DST)).is_plain()
+                    && memory_desc_wrapper(arg_md(DNNL_ARG_DIFF_SRC))
+                               .is_plain(); // Blocked memory formats are not supported
+            if (not ok) { return status::unimplemented; }
+
+            // dL/dX = (dL/dY) x W (hence no transpose required here)
+            auto empty_bias_desc = types::
+                    zero_md(); // empty memory descriptor to signify bias is not applied
+
+            // Temporary memory descriptors to initialize matmul_pd; diff_dst will always be 2D
+            memory_desc_t reshaped_diff_src_md;
+            memory_desc_t reshaped_weights_md;
+            CHECK(detail::flatten_md(*arg_md(DNNL_ARG_DIFF_SRC),
+                    reshaped_diff_src_md, format_tag::ab));
+            CHECK(detail::flatten_md(*arg_md(DNNL_ARG_WEIGHTS),
+                    reshaped_weights_md, format_tag::ab));
+
+            CHECK(gpu::generic::sycl::detail::init_matmul_pd(engine, attr(),
+                    arg_md(DNNL_ARG_DIFF_DST), &reshaped_weights_md,
+                    &empty_bias_desc, &reshaped_diff_src_md, matmul_pd));
+
+            auto scratchpad = scratchpad_registry().registrar();
+            scratchpad.book(memory_tracking::names::key_nested,
+                    matmul_pd->scratchpad_registry());
+            return status::success;
+        }
+
+        std::shared_ptr<primitive_desc_t> matmul_pd;
+
+    private:
+        bool check_bwd_data_dtypes(const data_type_t &src_dt,
+                const data_type_t &dst_dt, const data_type_t &weight_dt) {
+            using namespace data_type;
+            return (utils::one_of(src_dt, f32)
+                           && utils::one_of(dst_dt, f32, f16, bf16)
+                           && utils::one_of(weight_dt, f32, bf16, f16))
+                    || (utils::one_of(src_dt, bf16)
+                            && utils::one_of(dst_dt, bf16)
+                            && utils::one_of(weight_dt, bf16))
+                    || (utils::one_of(src_dt, f16) && utils::one_of(dst_dt, f16)
+                            && utils::one_of(weight_dt, f16));
+        }
+    };
+
+    status_t init(impl::engine_t *engine) override;
+    status_t execute(const exec_ctx_t &ctx) const override;
+
+private:
+    const pd_t *pd() const { return (const pd_t *)primitive_t::pd().get(); }
+    std::shared_ptr<impl::primitive_t> matmul_primitive;
+};
+
+struct ref_inner_product_bwd_weights_t
+    : public gpu::generic::sycl::primitive_t {
+
+    using gpu::generic::sycl::primitive_t::primitive_t;
+
+    struct pd_t : public gpu_inner_product_bwd_weights_pd_t {
+        using gpu_inner_product_bwd_weights_pd_t::
+                gpu_inner_product_bwd_weights_pd_t;
+        DECLARE_COMMON_PD_T("dpcpp:ref:any", ref_inner_product_bwd_weights_t);
+
+        status_t init(impl::engine_t *engine) {
+            auto src_dt = arg_md(DNNL_ARG_DIFF_DST)->data_type;
+            auto weights_dt = arg_md(DNNL_ARG_SRC)->data_type;
+            auto dst_dt = arg_md(DNNL_ARG_DIFF_WEIGHTS)->data_type;
+            auto bias_dt = arg_md(DNNL_ARG_DIFF_BIAS)->data_type;
+
+            bool ok = !is_fwd() && (set_default_params() == status::success)
+                    && check_bwd_weights_dtypes(
+                            src_dt, dst_dt, weights_dt, bias_dt)
+                    && attr()->has_default_values() // no post-op is supported
+                    && memory_desc_wrapper(arg_md(DNNL_ARG_DIFF_DST)).is_plain()
+                    && memory_desc_wrapper(arg_md(DNNL_ARG_SRC)).is_plain()
+                    && memory_desc_wrapper(arg_md(DNNL_ARG_DIFF_WEIGHTS))
+                               .is_plain();
+
+            if (not ok) { return status::unimplemented; };
+
+            memory_desc_t reshaped_src_md;
+            memory_desc_t reshaped_diff_wt_md;
+            memory_desc_t reshaped_diff_dst_md;
+            auto empty_bias_desc = types::
+                    zero_md(); // empty memory descriptor to signify bias is not applied
+            // (dL / dW) = (dL/dY) ^ T x X;
+            CHECK(detail::flatten_md(
+                    *arg_md(DNNL_ARG_SRC), reshaped_src_md, format_tag::ab));
+            CHECK(detail::flatten_md(*arg_md(DNNL_ARG_DIFF_DST),
+                    reshaped_diff_dst_md, format_tag::ba));
+            CHECK(detail::flatten_md(*arg_md(DNNL_ARG_DIFF_WEIGHTS),
+                    reshaped_diff_wt_md, format_tag::ab));
+
+            // Create matmul_pd for dL/dW
+            CHECK(detail::init_matmul_pd(engine, attr(), &reshaped_diff_dst_md,
+                    &reshaped_src_md, &empty_bias_desc, &reshaped_diff_wt_md,
+                    matmul_pd));
+            auto scratchpad = scratchpad_registry().registrar();
+            scratchpad.book(memory_tracking::names::key_nested_multiple,
+                    matmul_pd->scratchpad_registry());
+
+            //Create reduction_pd for dL/dB
+            if (with_bias()) {
+                CHECK(init_reduction_pd(engine, arg_md(DNNL_ARG_DIFF_DST),
+                        arg_md(DNNL_ARG_DIFF_BIAS)));
+                // book scratchpad for reduction
+                scratchpad.book(memory_tracking::names::key_nested_multiple + 1,
+                        reduction_pd->scratchpad_registry());
+            }
+            return status::success;
+        }
+
+        std::shared_ptr<primitive_desc_t> matmul_pd;
+        std::shared_ptr<primitive_desc_t> reduction_pd;
+
+    private:
+        bool check_bwd_weights_dtypes(const data_type_t &src_dt,
+                const data_type_t &dst_dt, const data_type_t &weight_dt,
+                const data_type_t &bias_dt) {
+            using namespace data_type;
+            return (utils::one_of(src_dt, f32) && utils::one_of(dst_dt, f32)
+                           && utils::one_of(weight_dt, f32)
+                           && utils::one_of(bias_dt, f32, undef))
+                    || (utils::one_of(src_dt, bf16)
+                            && utils::one_of(dst_dt, bf16)
+                            && utils::one_of(weight_dt, f32, bf16)
+                            && utils::one_of(bias_dt, f32, bf16, undef))
+                    || (utils::one_of(src_dt, f16) && utils::one_of(dst_dt, f16)
+                            && utils::one_of(weight_dt, f32, f16)
+                            && utils::one_of(bias_dt, f32, f16, undef));
+        }
+
+        status_t init_reduction_pd(impl::engine_t *engine,
+                const memory_desc_t *src_desc, const memory_desc_t *dest_desc) {
+            reduction_desc_t reduction_descriptor;
+            //diff_bias is 1D, diff_dst will be 2D, reshape diff_bias to 1xOC
+            dims_t diff_bias_reshaped_dims {1, dest_desc->dims[0]};
+            memory_desc_t diff_bias_reshaped;
+            CHECK(memory_desc_init_by_tag(diff_bias_reshaped, 2,
+                    diff_bias_reshaped_dims, dest_desc->data_type,
+                    format_tag::ab));
+            CHECK(reduction_desc_init(&reduction_descriptor,
+                    alg_kind::reduction_sum, src_desc, &diff_bias_reshaped,
+                    0.0f, 0.0f));
+            primitive_desc_iterator_t it(engine,
+                    reinterpret_cast<op_desc_t *>(&reduction_descriptor),
+                    attr(), nullptr);
+
+            if (!it.is_initialized()) return status::invalid_arguments;
+            while (++it != it.end()) {
+                if (*it) {
+                    reduction_pd = *it;
+                    break;
+                }
+            }
+            return status::success;
+        }
+    };
+
+    status_t init(impl::engine_t *engine) override;
+    status_t execute(const exec_ctx_t &ctx) const override;
+
+private:
+    const pd_t *pd() const { return (const pd_t *)primitive_t::pd().get(); }
+    std::shared_ptr<impl::primitive_t> matmul_primitive;
+    std::shared_ptr<impl::primitive_t> reduction_primitive;
+};
+
 } // namespace dnnl::impl::gpu::generic::sycl
 
 #endif

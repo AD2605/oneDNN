@@ -459,10 +459,6 @@ struct cudnn_matmul_impl_t {
                 cudnn_handle, c, bias, reorder_scratch, host_dst_scale);
     }
 
-    ~cudnn_matmul_impl_t() {
-        if (matmul_params_) { matmul_params_->cleanup(); }
-    }
-
 private:
     std::shared_ptr<cublas_params> matmul_params_;
 };

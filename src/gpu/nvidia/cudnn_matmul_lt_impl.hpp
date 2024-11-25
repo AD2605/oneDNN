@@ -809,10 +809,6 @@ struct cudnn_matmul_lt_impl_t {
         }
     }
 
-    ~cudnn_matmul_lt_impl_t() {
-        if (matmul_params_) { matmul_params_->cleanup(); }
-    }
-
 private:
     void transform_matrix(cublasLtHandle_t handle,
             const std::shared_ptr<cublas_lt_params> &params,
