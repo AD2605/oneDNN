@@ -145,7 +145,7 @@ status_t ref_inner_product_bwd_weights_t::execute(const exec_ctx_t &ctx) const {
                 = args_copy_reduction[DNNL_ARG_DIFF_DST];
         args_copy_reduction[DNNL_ARG_DST]
                 = args_copy_reduction[DNNL_ARG_DIFF_BIAS];
-        exec_ctx_t copied_ctx_reduction(ctx.stream(), std::move(args_copy));
+        exec_ctx_t copied_ctx_reduction(ctx.stream(), std::move(args_copy_reduction));
 
         copied_ctx_reduction.set_scratchpad_grantor(
                 reduction_scratchpad.grantor());
