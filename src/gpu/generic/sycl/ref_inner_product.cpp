@@ -104,4 +104,55 @@ status_t ref_inner_product_bwd_data_t::execute(const exec_ctx_t &ctx) const {
     return matmul_primitive->execute(copied_ctx);
 }
 
+status_t ref_inner_product_bwd_weights_t::init(impl::engine_t *engine) {
+    std::pair<std::shared_ptr<impl::primitive_t>, cache_state_t> p;
+    CHECK(pd()->matmul_pd->create_primitive_nested(p, engine));
+    matmul_primitive = p.first;
+
+    if (pd()->with_bias()) {
+        std::pair<std::shared_ptr<impl::primitive_t>, cache_state_t>
+                p_reduction;
+        CHECK(pd()->reduction_pd->create_primitive_nested(p, engine));
+        reduction_primitive = p_reduction.first;
+    }
+
+    return status::success;
+}
+
+status_t ref_inner_product_bwd_weights_t::execute(const exec_ctx_t &ctx) const {
+    nested_scratchpad_t nested_scratchpad(
+            ctx, memory_tracking::names::key_nested_multiple, matmul_primitive);
+
+    exec_args_t args_copy(ctx.args());
+    // Map src and dst to diff_dst and diff_src respectively
+    auto src_memory_arg = args_copy[DNNL_ARG_SRC];
+    args_copy[DNNL_ARG_SRC] = args_copy[DNNL_ARG_DIFF_DST];
+    args_copy[DNNL_ARG_WEIGHTS] = src_memory_arg;
+    args_copy[DNNL_ARG_DST] = args_copy[DNNL_ARG_DIFF_WEIGHTS];
+    exec_ctx_t copied_ctx(ctx.stream(), std::move(args_copy));
+
+    copied_ctx.set_scratchpad_grantor(nested_scratchpad.grantor());
+    // calcules dL/dW;
+    CHECK(matmul_primitive->execute(copied_ctx));
+
+    if (pd()->with_bias()) {
+        //calculates dL/dB
+        nested_scratchpad_t reduction_scratchpad(ctx,
+                memory_tracking::names::key_nested_multiple + 1,
+                reduction_primitive);
+        exec_args_t args_copy_reduction(ctx.args());
+        args_copy_reduction[DNNL_ARG_SRC]
+                = args_copy_reduction[DNNL_ARG_DIFF_DST];
+        args_copy_reduction[DNNL_ARG_DST]
+                = args_copy_reduction[DNNL_ARG_DIFF_BIAS];
+        exec_ctx_t copied_ctx_reduction(ctx.stream(), std::move(args_copy));
+
+        copied_ctx_reduction.set_scratchpad_grantor(
+                reduction_scratchpad.grantor());
+        // calcules dL/dW;
+        CHECK(matmul_primitive->execute(copied_ctx));
+    }
+    return status::success;
+}
+
 } // namespace dnnl::impl::gpu::generic::sycl
