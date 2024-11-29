@@ -17,6 +17,7 @@
 #ifndef GPU_GENERIC_SYCL_REF_MATMUL_HPP
 #define GPU_GENERIC_SYCL_REF_MATMUL_HPP
 
+#include "gpu/generic/sycl/specialization_constants.hpp"
 #include "gpu/generic/sycl/sycl_gpu_primitive.hpp"
 #include "gpu/generic/sycl/sycl_io_helper.hpp"
 #include "gpu/generic/sycl/sycl_post_ops.hpp"
@@ -69,9 +70,19 @@ struct ref_matmul_t : public gpu::generic::sycl::primitive_t {
         }
 
         sycl_matmul_conf_t conf_;
+
+        xpu::sycl::md_t_spec_const data_md_t;
+        xpu::sycl::md_t_spec_const dst_md_t;
+        xpu::sycl::md_t_spec_const weights_md_t;
+        xpu::sycl::md_t_spec_const bias_md_t;
+
         bool any_runtime_params_ = false;
 
         void init_rt_conf(sycl_matmul_conf_t &conf,
+                xpu::sycl::md_t_spec_const &data_md_t_,
+                xpu::sycl::md_t_spec_const &dst_md_t_,
+                xpu::sycl::md_t_spec_const &weights_md_t_,
+                xpu::sycl::md_t_spec_const &bias_md_t_,
                 const memory_desc_wrapper src_d,
                 const memory_desc_wrapper weights_d,
                 const memory_desc_wrapper dst_d,

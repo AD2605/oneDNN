@@ -16,6 +16,7 @@
 
 #include "gpu/generic/sycl/ref_matmul.hpp"
 #include "gpu/generic/sycl/matmul_kernels.hpp"
+#include "gpu/generic/sycl/specialization_constants.hpp"
 
 namespace dnnl {
 namespace impl {
@@ -55,13 +56,54 @@ void ref_matmul_t::pd_t::init_conf() {
             return;
         }
     }
-    init_rt_conf(conf_, src_d, weights_d, dst_d, bias_d);
+    init_rt_conf(conf_, data_md_t, dst_md_t, weights_md_t, bias_md_t, src_d,
+            weights_d, dst_d, bias_d);
 }
 
 void ref_matmul_t::pd_t::init_rt_conf(sycl_matmul_conf_t &conf,
-        const memory_desc_wrapper src_d, const memory_desc_wrapper weights_d,
-        const memory_desc_wrapper dst_d,
+        xpu::sycl::md_t_spec_const &data_md_t_,
+        xpu::sycl::md_t_spec_const &dst_md_t_,
+        xpu::sycl::md_t_spec_const &weights_md_t_,
+        xpu::sycl::md_t_spec_const &bias_md_t_, const memory_desc_wrapper src_d,
+        const memory_desc_wrapper weights_d, const memory_desc_wrapper dst_d,
         const memory_desc_wrapper bias_d) const {
+
+    // Lambda because this function will not be used anywhere else
+    auto init_md_t_sc_from_md = [=](xpu::sycl::md_t_spec_const &md_t_sc,
+                                        const memory_desc_t *md) -> void {
+        // copied from types.hpp::md_t::md_t(memory_desc_t*)
+        constexpr int max_dims = 6;
+        using dim32_t = int32_t;
+        using dims32_t = dim32_t[max_dims];
+
+        memory_desc_wrapper mdw(md);
+
+        assert(mdw.format_kind() == format_kind::blocked);
+        assert(mdw.ndims() <= max_dims);
+
+        const auto &blk = mdw.blocking_desc();
+
+        md_t_sc.data_type_ = mdw.data_type();
+#define CHECK_AND_ASSIGN(lhs, rhs) \
+    assert((rhs) <= INT32_MAX); \
+    (lhs) = static_cast<dim32_t>(rhs)
+
+        CHECK_AND_ASSIGN(md_t_sc.ndims_, mdw.ndims());
+        CHECK_AND_ASSIGN(md_t_sc.offset0_, mdw.offset0());
+        CHECK_AND_ASSIGN(md_t_sc.inner_nblks_, blk.inner_nblks);
+
+        for (int d = 0; d < mdw.ndims(); d++) {
+            CHECK_AND_ASSIGN(md_t_sc.dims_[d], mdw.dims()[d]);
+            CHECK_AND_ASSIGN(md_t_sc.padded_dims_[d], mdw.padded_dims()[d]);
+            CHECK_AND_ASSIGN(
+                    md_t_sc.padded_offsets_[d], mdw.padded_offsets()[d]);
+            CHECK_AND_ASSIGN(md_t_sc.strides_[d], blk.strides[d]);
+            CHECK_AND_ASSIGN(md_t_sc.inner_blks_[d], blk.inner_blks[d]);
+            CHECK_AND_ASSIGN(md_t_sc.inner_idxs_[d], blk.inner_idxs[d]);
+        }
+#undef CHECK_AND_ASSIGN
+    };
+
     int matmul_dim_1 = ndims() - 2;
     int matmul_dim_2 = ndims() - 1;
 
@@ -73,7 +115,8 @@ void ref_matmul_t::pd_t::init_rt_conf(sycl_matmul_conf_t &conf,
                 data_md_copy.dims[matmul_dim_2]);
         conf.transpose_data = true;
     }
-    conf.data_md = xpu::sycl::md_t(&data_md_copy);
+    //conf.data_md = xpu::sycl::md_t(&data_md_copy);
+    init_md_t_sc_from_md(data_md_t_, &data_md_copy);
 
     memory_desc_t weights_md_copy = *weights_d.md_;
     auto &weights_strides = weights_md_copy.format_desc.blocking.strides;
@@ -83,7 +126,8 @@ void ref_matmul_t::pd_t::init_rt_conf(sycl_matmul_conf_t &conf,
                 weights_md_copy.dims[matmul_dim_2]);
         conf.transpose_weights = true;
     }
-    conf.weights_md = xpu::sycl::md_t(&weights_md_copy);
+    //conf.weights_md = xpu::sycl::md_t(&weights_md_copy);
+    init_md_t_sc_from_md(weights_md_t_, &weights_md_copy);
 
     memory_desc_t dst_md_copy = *dst_d.md_;
     auto &dst_strides = dst_md_copy.format_desc.blocking.strides;
@@ -93,7 +137,8 @@ void ref_matmul_t::pd_t::init_rt_conf(sycl_matmul_conf_t &conf,
                 dst_md_copy.dims[matmul_dim_1], dst_md_copy.dims[matmul_dim_2]);
         conf.transpose_dst = true;
     }
-    conf.dst_md = xpu::sycl::md_t(&dst_md_copy);
+    //conf.dst_md = xpu::sycl::md_t(&dst_md_copy);
+    init_md_t_sc_from_md(dst_md_t_, &dst_md_copy);
 
     if (with_bias()) {
         memory_desc_t bias_md_copy = *bias_d.md_;
@@ -104,13 +149,14 @@ void ref_matmul_t::pd_t::init_rt_conf(sycl_matmul_conf_t &conf,
                     bias_md_copy.dims[matmul_dim_2]);
             conf.transpose_bias = true;
         }
-        conf.bias_md = xpu::sycl::md_t(&bias_md_copy);
+        //conf.bias_md = xpu::sycl::md_t(&bias_md_copy);
+        init_md_t_sc_from_md(bias_md_t_, &bias_md_copy);
     }
 
     dims_t dst_blocks;
     for (int i = 0; i < matmul_kernel_fwd_t::max_supported_ndims; i++) {
-        if (i < conf.dst_md.ndims()) {
-            dst_blocks[i] = conf.dst_md.dims()[i];
+        if (i < dst_md_t.ndims_) {
+            dst_blocks[i] = dst_md_t.dims_[i];
         } else {
             dst_blocks[i] = 1;
         }
@@ -137,7 +183,10 @@ void ref_matmul_t::pd_t::init_rt_conf(sycl_matmul_conf_t &conf,
 
 status_t ref_matmul_t::init(impl::engine_t *engine) {
     const auto kid = ::sycl::get_kernel_id<matmul_kernel_fwd_t>();
-    CHECK(create_kernel(engine, kid, &kernel_));
+    CHECK(create_kernel<detail::matmul::md_t_spec_const_id>(engine, kid,
+            &kernel_,
+            {{pd()->data_md_t, pd()->dst_md_t, pd()->weights_md_t,
+                    pd()->bias_md_t}}));
     return status::success;
 }
 
@@ -151,7 +200,10 @@ status_t ref_matmul_t::execute(const exec_ctx_t &ctx) const {
                 = ctx.memory_mdw(DNNL_ARG_WEIGHTS, pd()->weights_md());
         const auto dst_d = ctx.memory_mdw(DNNL_ARG_DST, pd()->dst_md());
         const auto bias_d = ctx.memory_mdw(DNNL_ARG_BIAS, pd()->weights_md(1));
-        pd()->init_rt_conf(conf, src_d, weights_d, dst_d, bias_d);
+        //Need to use const cast here
+        pd()->init_rt_conf(conf, pd()->data_md_t, pd()->dst_md_t,
+                pd()->weights_md_t, pd()->bias_md_t, src_d, weights_d, dst_d,
+                bias_d);
     }
 
     parallel_for(ctx, kernel_, [&](::sycl::handler &cgh) {
