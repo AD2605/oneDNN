@@ -96,16 +96,18 @@ class inner_product_test_bwd_data_t
 protected:
     void SetUp() override {
         auto p = ::testing::TestWithParam<inprod_test_params_t>::GetParam();
-        SKIP_IF_CUDA(!cuda_check_format_tags(p.diff_src_format,
+        SKIP_IF_CUDA(!cuda_generic_check_format_tags(p.diff_src_format,
                              p.weights_format, p.diff_dst_format),
                 "Unsupported format tag");
         SKIP_IF_CUDA(p.ndims > 5, "Unsupported number of dimensions");
-        SKIP_IF_GENERIC(true, "Primitive not implemented");
+        SKIP_IF_GENERIC(!cuda_generic_check_format_tags(p.diff_src_format,
+                                p.weights_format, p.diff_dst_format),
+                "Unsupported format tag");
         catch_expected_failures(
                 [&]() { Test(); }, p.expect_to_fail, p.expected_status);
     }
 
-    bool cuda_check_format_tags(memory::format_tag diff_src_format,
+    bool cuda_generic_check_format_tags(memory::format_tag diff_src_format,
             memory::format_tag wei_format, memory::format_tag diff_dst_format) {
         bool diff_src_ok = diff_src_format == memory::format_tag::ncdhw
                 || diff_src_format == memory::format_tag::ndhwc
@@ -131,6 +133,20 @@ protected:
                 || diff_dst_format == memory::format_tag::nc;
 
         return diff_src_ok && wei_ok && diff_dst_ok;
+    }
+
+    std::vector<int> get_dim_order(const memory::dims &strides) {
+        size_t ndims = strides.size();
+        std::vector<int> order(ndims);
+        for (size_t i = 0; i < ndims; ++i) {
+            order[i] = i;
+        }
+
+        std::sort(order.begin(), order.end(), [&strides](size_t i, size_t j) {
+            return strides[i] < strides[j];
+        });
+
+        return order;
     }
 
     void Test() {
@@ -170,6 +186,10 @@ protected:
         auto ip_weights_desc = create_md(wei_dims, data_type, p.weights_format);
         auto ip_diff_dst_desc
                 = create_md({ipd.mb, ipd.oc}, data_type, p.diff_dst_format);
+
+        SKIP_IF_GENERIC(get_dim_order(ip_diff_src_desc.get_strides())
+                        != get_dim_order(ip_weights_desc.get_strides()),
+                "Unsupported case for generic");
 
         // Create inner product forward (hint for backward)
         auto ip_fwd_pdesc = hint_pd_t(eng, prop_kind::forward, ip_diff_src_desc,
