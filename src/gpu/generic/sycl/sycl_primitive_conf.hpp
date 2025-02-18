@@ -460,6 +460,20 @@ struct sycl_reduction_conf_t {
     static constexpr int local_col_wg = 8;
 };
 
+struct sycl_group_norm_conf_t {
+    prop_kind_t prop_kind;
+    xpu::sycl::md_t src_desc;
+    xpu::sycl::md_t dst_desc;
+    bool use_global_stats;
+    int32_t num_groups;
+    int32_t num_channels_per_group;
+    bool use_scale;
+    bool use_shift;
+    data_type_t scale_dt;
+    data_type_t shift_dt;
+    float eta;
+};
+
 CHECK_SYCL_KERNEL_ARG_TYPE(sycl_binary_conf_t);
 CHECK_SYCL_KERNEL_ARG_TYPE(sycl_prelu_conf_t);
 CHECK_SYCL_KERNEL_ARG_TYPE(sycl_shuffle_conf_t);
@@ -478,6 +492,7 @@ CHECK_SYCL_KERNEL_ARG_TYPE(sycl_convolution_bwd_data_conf_t);
 CHECK_SYCL_KERNEL_ARG_TYPE(sycl_convolution_bwd_weights_conf_t);
 CHECK_SYCL_KERNEL_ARG_TYPE(sycl_simple_reduction_conf_t);
 CHECK_SYCL_KERNEL_ARG_TYPE(sycl_reduction_conf_t);
+CHECK_SYCL_KERNEL_ARG_TYPE(sycl_group_norm_conf_t);
 
 } // namespace sycl
 } // namespace generic
