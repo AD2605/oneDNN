@@ -469,8 +469,6 @@ struct sycl_group_norm_conf_t {
     int32_t num_channels_per_group;
     bool use_scale;
     bool use_shift;
-    data_type_t scale_dt;
-    data_type_t shift_dt;
     float eta;
 };
 
