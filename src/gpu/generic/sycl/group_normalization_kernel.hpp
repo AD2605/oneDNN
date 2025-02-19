@@ -20,6 +20,7 @@
 
 #include <sycl/nd_item.hpp>
 
+#include "common/primitive_exec_types.hpp"
 #include "gpu/generic/sycl/sycl_io_helper.hpp"
 #include "gpu/generic/sycl/sycl_primitive_conf.hpp"
 

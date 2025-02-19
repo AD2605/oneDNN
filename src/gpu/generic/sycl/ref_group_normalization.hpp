@@ -19,13 +19,12 @@
 #define GPU_GENERIC_SYCL_REF_GROUP_NORMALIZATION_HPP
 
 #include "common/group_normalization_pd.hpp"
+#include "common/primitive_exec_types.hpp"
 #include "gpu/generic/sycl/engine.hpp"
 #include "gpu/generic/sycl/group_normalization_kernel.hpp"
 #include "gpu/generic/sycl/sycl_gpu_primitive.hpp"
-#include "gpu/generic/sycl/sycl_post_ops.hpp"
 #include "gpu/generic/sycl/sycl_primitive_conf.hpp"
 #include "gpu/generic/sycl/sycl_utils.hpp"
-#include "gpu/gpu_primitive.hpp"
 
 namespace dnnl::impl::gpu::generic::sycl {
 struct ref_group_normalization_fwd_t : public gpu::generic::sycl::primitive_t {
