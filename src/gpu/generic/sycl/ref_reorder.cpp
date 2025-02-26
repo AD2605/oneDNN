@@ -30,12 +30,24 @@ status_t ref_reorder_t::pd_t::init_conf() {
     conf_.src_md = xpu::sycl::md_t(src_md(0));
     conf_.dst_md = xpu::sycl::md_t(dst_md());
 
-    conf_.wk_size = memory_desc_wrapper(src_md(0)).nelems();
+    //get padded number of elements from source and destination
+    auto src_nelems = memory_desc_wrapper(arg_md(DNNL_ARG_FROM)).nelems(true);
+    auto dst_nelems = memory_desc_wrapper(arg_md(DNNL_ARG_TO)).nelems(true);
 
-    conf_.do_scale_src = !attr()->scales_.has_default_values(DNNL_ARG_SRC_0);
-    conf_.scale_src_mask = attr()->scales_.get_mask(DNNL_ARG_SRC_0);
-    conf_.do_scale_dst = !attr()->scales_.has_default_values(DNNL_ARG_DST);
-    conf_.scale_dst_mask = attr()->scales_.get_mask(DNNL_ARG_DST);
+    // To cover cases when src has more padding than destination, in that case
+    // simply setting the range as dst_nelems does not cover all the source elements
+    conf_.num_elements
+            = static_cast<std::size_t>(std::max(src_nelems, dst_nelems));
+
+    conf_.do_scale_src = !attr()->scales_.has_default_values(DNNL_ARG_FROM);
+    conf_.scale_src_mask = attr()->scales_.get_mask(DNNL_ARG_FROM);
+    conf_.do_scale_dst = !attr()->scales_.has_default_values(DNNL_ARG_TO);
+    conf_.scale_dst_mask = attr()->scales_.get_mask(DNNL_ARG_TO);
+    conf_.apply_src_zp
+            = !attr()->zero_points_.has_default_values(DNNL_ARG_FROM);
+    conf_.src_zp_mask = attr()->zero_points_.get_mask(DNNL_ARG_FROM);
+    conf_.apply_dst_zp = !attr()->zero_points_.has_default_values(DNNL_ARG_TO);
+    conf_.dst_zp_mask = attr()->zero_points_.get_mask(DNNL_ARG_TO);
     conf_.post_ops = sycl_post_ops_t(attr(), dst_md());
 
     return status::success;
@@ -51,7 +63,8 @@ status_t ref_reorder_t::execute(const exec_ctx_t &ctx) const {
     parallel_for(ctx, kernel_, [&](::sycl::handler &cgh) {
         reorder_kernel_t reorder_kernel(pd()->conf_, cgh, ctx);
 
-        cgh.parallel_for(get_range(ctx, pd()->conf_.wk_size), reorder_kernel);
+        cgh.parallel_for(
+                get_range(ctx, pd()->conf_.num_elements), reorder_kernel);
     });
 
     return status::success;
