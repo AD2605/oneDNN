@@ -147,6 +147,7 @@ bool is_nvidia_gpu(const dnnl_engine_t &engine = get_test_engine());
 bool is_f64_supported(const dnnl_engine_t &engine = get_test_engine());
 bool is_amd_gpu(const dnnl_engine_t &engine = get_test_engine());
 bool is_generic_gpu(const dnnl_engine_t &engine = get_test_engine());
+bool is_blocked_format(const std::string &format_tag);
 
 // Extended version of dnnl_sycl_interop_memory_kind_t enumeration.
 enum class memory_kind_ext_t {

@@ -354,6 +354,21 @@ void skip_unimplemented_prb(const prb_t *prb, res_t *res) {
             res->reason = skip_reason::case_not_supported;
             return;
         }
+
+        // Skip blocked format tags and 4 bit formats for Nvidia/AMD/Generic SYCL backends
+        const auto engine = get_test_engine();
+        if (is_generic_gpu(engine) || is_nvidia_gpu(engine)
+                || is_amd_gpu(engine)) {
+            const bool is_4bit_format = prb->sdt == dnnl_f4_e2m1
+                    || prb->ddt == dnnl_f4_e3m0 || prb->sdt == dnnl_u4
+                    || prb->ddt == dnnl_s4;
+
+            if (is_blocked_format(prb->stag) || is_blocked_format(prb->dtag)
+                    || is_4bit_format) {
+                res->state = SKIPPED;
+                res->reason = skip_reason::case_not_supported;
+            }
+        }
     }
 }
 
