@@ -360,7 +360,9 @@ void skip_unimplemented_prb(const prb_t *prb, res_t *res) {
         if (is_generic_gpu(engine) || is_nvidia_gpu(engine)
                 || is_amd_gpu(engine)) {
             const bool is_4bit_format = prb->sdt == dnnl_f4_e2m1
+                    || prb->ddt == dnnl_f4_e2m1 || prb->sdt == dnnl_f4_e3m0
                     || prb->ddt == dnnl_f4_e3m0 || prb->sdt == dnnl_u4
+                    || prb->ddt == dnnl_u4 || prb->sdt == dnnl_s4
                     || prb->ddt == dnnl_s4;
 
             if (is_blocked_format(prb->stag) || is_blocked_format(prb->dtag)
